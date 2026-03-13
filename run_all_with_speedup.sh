@@ -11,8 +11,8 @@
 
 MPICC=/usr/mpi/gcc/openmpi-4.1.5rc2/bin/mpicc
 
-OUTFILE1="par_pi_op_ydong.txt"
-OUTFILE2="par_pi_op_simple_ydong.txt"
+OUTFILE1="par_pi_op_yinkun.txt"
+OUTFILE2="par_pi_op_simple_yinkun.txt"
 
 RESULT_DIR="job_results"
 N_VALUES="1048576 8388608 67108864"
@@ -29,17 +29,25 @@ compile() {
 #SBATCH --time=00:05:00
 #SBATCH --output=slurm_compile.out
 
-$MPICC -o par_pi Par_Pi.c -lm
-$MPICC -o par_pi_simple Par_Pi_simple.c -lm
+$MPICC -o par_pi par_pi.c -lm
+$MPICC -o par_pi_simple par_pi_simple.c -lm
 echo "Compile done."
 EOF
     echo "Compile job submitted. Wait for it to finish, then run: ./run_all.sh baseline"
 }
 
 submit_job() {
-    local PROG=$1 N=$2 P=$3 P1=$4 P2=$5 COMBO=$6 OUTFILE=$7
+    local PROG=$1
+    local N=$2
+    local P=$3
+    local P1=$4
+    local P2=$5
+    local COMBO=$6
+    local OUTFILE=$7
+
     local JOBNAME="${PROG}_n${N}_P${P}_${COMBO}"
     local RESULT_FILE="${RESULT_DIR}/${JOBNAME}.txt"
+    local BASELINE_FILE="${RESULT_DIR}/${PROG}_n${N}_P1_a.txt"
 
     sbatch <<EOF
 #!/bin/bash
@@ -51,8 +59,36 @@ submit_job() {
 #SBATCH --time=00:10:00
 #SBATCH --output=slurm_${JOBNAME}.out
 
+set -e
+
 /usr/mpi/gcc/openmpi-4.1.5rc2/bin/mpiexec --oversubscribe -n ${P} ./${PROG} ${N} ${P1} ${P2} ${RESULT_FILE}
+
+# 读取 baseline runtime 和当前 runtime，计算 speedup / efficiency
+CUR_RUNTIME=\$(grep -o 'runtime=[0-9.eE+-]*' "${RESULT_FILE}" | tail -n 1 | cut -d= -f2)
+
+if [ "${P}" -eq 1 ]; then
+    SPEEDUP="1.000000"
+    EFFICIENCY="1.000000"
+else
+    if [ -f "${BASELINE_FILE}" ]; then
+        BASE_RUNTIME=\$(grep -o 'runtime=[0-9.eE+-]*' "${BASELINE_FILE}" | tail -n 1 | cut -d= -f2)
+
+        if [ -n "\$BASE_RUNTIME" ] && [ -n "\$CUR_RUNTIME" ]; then
+            SPEEDUP=\$(awk -v b="\$BASE_RUNTIME" -v c="\$CUR_RUNTIME" 'BEGIN { if (c > 0) printf "%.6f", b/c; else print "NA" }')
+            EFFICIENCY=\$(awk -v s="\$SPEEDUP" -v p="${P}" 'BEGIN { if (s != "NA" && p > 0) printf "%.6f", s/p; else print "NA" }')
+        else
+            SPEEDUP="NA"
+            EFFICIENCY="NA"
+        fi
+    else
+        SPEEDUP="NA"
+        EFFICIENCY="NA"
+    fi
+fi
+
+echo "speedup=\${SPEEDUP}, efficiency=\${EFFICIENCY}" >> "${RESULT_FILE}"
 EOF
+
     echo "Submitted: ${JOBNAME} (nodes=${P1}, ntasks-per-node=${P2})"
 }
 
@@ -113,7 +149,7 @@ collect() {
     echo "Collecting par_pi results..."
     for f in ${RESULT_DIR}/par_pi_n*_*.txt; do
         [ -e "$f" ] || continue
-        echo "--- $(basename $f) ---" >> "${OUTFILE1}"
+        echo "--- $(basename "$f") ---" >> "${OUTFILE1}"
         cat "$f" >> "${OUTFILE1}"
         echo "" >> "${OUTFILE1}"
     done
@@ -121,7 +157,7 @@ collect() {
     echo "Collecting par_pi_simple results..."
     for f in ${RESULT_DIR}/par_pi_simple_n*_*.txt; do
         [ -e "$f" ] || continue
-        echo "--- $(basename $f) ---" >> "${OUTFILE2}"
+        echo "--- $(basename "$f") ---" >> "${OUTFILE2}"
         cat "$f" >> "${OUTFILE2}"
         echo "" >> "${OUTFILE2}"
     done
